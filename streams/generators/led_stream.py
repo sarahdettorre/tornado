@@ -70,16 +70,21 @@ class LED:
 
 class LEDConceptDrift:
 
-    def __init__(self, concept_length=25000, num_irr_attr=17, led_attr_drift=[0, 3, 1, 3],
-                 transition_length=500, noise_rate=0.1, random_seed=1):
-
-        self.__INSTANCES_NUM = concept_length * len(led_attr_drift)
+    def __init__(self, concept_length=[25000, 25000, 25000, 25000], num_irr_attr=17, led_attr_drift=[0, 3, 1, 3],transition_length=[500,500,500], noise_rate=0.1, led_attr_noise=list(range(0, 7)), led_target_noise=True, random_seed=1):
+        
+        self.__INSTANCES_NUM = sum(concept_length)
         self.__CONCEPT_LENGTH = concept_length
         self.__NUM_IRR_ATTR = num_irr_attr
         self.__LED_ATTR_DRIFTS = led_attr_drift
+        self.__LED_ATTR_NOISE = led_attr_noise
+        self.__LED_TARGET_NOISE = led_target_noise
         self.__NUM_DRIFTS = len(led_attr_drift) - 1
         self.__W = transition_length
         self.__RECORDS = []
+
+        #print("hi")
+        #print(str(self.__INSTANCES_NUM))
+
 
         self.__RANDOM_SEED = random_seed
         random.seed(self.__RANDOM_SEED)
@@ -87,18 +92,21 @@ class LEDConceptDrift:
 
         self.LED_GENERATORS = self.create_led_objects()
 
-        print("You are going to generate a " + self.get_class_name() + " data stream containing " +
-              str(self.__INSTANCES_NUM) + " instances, and " + str(self.__NUM_DRIFTS) + " concept drifts; " + "\n\r" +
-              "where they appear at every " + str(self.__CONCEPT_LENGTH) + " instances.")
 
     @staticmethod
     def get_class_name():
         return LEDConceptDrift.__name__
+    
+    def get_noise_locations(self):
+        return self.__NOISE_LOCATIONS
+
+    def get_total_len(self):
+        return len(self.__RECORDS)
 
     def create_led_objects(self):
         led_objects = []
-        for i in range(0, self.__NUM_DRIFTS + 1):
-            led_objects.append(LED(self.__CONCEPT_LENGTH, self.__NUM_IRR_ATTR, self.__LED_ATTR_DRIFTS[i]))
+        for attr_drift, concept_length in zip(self.__LED_ATTR_DRIFTS,self.__CONCEPT_LENGTH):
+            led_objects.append(LED(concept_length, self.__NUM_IRR_ATTR, attr_drift))
         return led_objects
 
     def generate(self, output_path="LED"):
@@ -110,25 +118,33 @@ class LEDConceptDrift:
             self.__RECORDS += led.generate()
 
         # [2] TRANSITION
-        if self.__W != 0:
+        #if any of the transitions are greater than 0 (ie a transition period should ve generated)
+        if any(self.__W):
+            #for each concept but the last
             for i in range(0, len(self.LED_GENERATORS) - 1):
                 transition = []
-                for j in range(0, self.__W):
-                    if random.random() < Transition.sigmoid(j, self.__W):
+                #for range 0 to transition length
+                for j in range(0, self.__W[i]):
+                    #generate a random number - if it's less than the sigmoid generated number, add an instance of the next concept
+                    if random.random() < Transition.sigmoid(j, self.__W[i]):
                         transition.append(self.LED_GENERATORS[i + 1].create_instance())
+                    #else, add an instance of the current concept
                     else:
                         transition.append(self.LED_GENERATORS[i].create_instance())
-                starting_index = (i + 1) * self.__CONCEPT_LENGTH
-                ending_index = (i + 1) * self.__CONCEPT_LENGTH + self.__W
-                self.__RECORDS[starting_index:ending_index] = transition
+                #start index of the transition injection should be at the beginning of the next concept
+                starting_index = (i + 1) * self.__CONCEPT_LENGTH[i]
+                #inject the transition at the starting index, such that the full length of the pure concepts exist on either side
+                self.__RECORDS[starting_index:starting_index] = transition
 
         # [3] ADDING NOISE
         if len(self.__NOISE_LOCATIONS) != 0:
-            self.add_noise()
-
+            if self.__LED_ATTR_NOISE:
+                self.add_noise_attributes()
+            if self.__LED_TARGET_NOISE == True:
+                self.add_noise_target()
         self.write_to_arff(output_path + ".arff")
 
-    def add_noise(self):
+    def add_noise_target(self):
         for i in range(0, len(self.__NOISE_LOCATIONS)):
             noise_spot = self.__NOISE_LOCATIONS[i]
             y_r = self.__RECORDS[noise_spot][1]
@@ -136,6 +152,13 @@ class LEDConceptDrift:
             while y_n == y_r:
                 y_n = random.randint(0, 9)
             self.__RECORDS[noise_spot][1] = y_n
+
+    def add_noise_attributes(self):
+        for i in range(0, len(self.__NOISE_LOCATIONS)):
+            noise_spot = self.__NOISE_LOCATIONS[i]
+            x_r = self.__RECORDS[noise_spot][0]
+            x_r[random.choice(self.__LED_ATTR_NOISE)] ^= 1 #flip a bit from one of the noisy attributes, in place
+            self.__RECORDS[noise_spot][0] = x_r
 
     def write_to_arff(self, output_path):
         arff_writer = open(output_path, "w")
@@ -153,4 +176,4 @@ class LEDConceptDrift:
                     x_str = x_str + str(x_i) + ","
             arff_writer.write(x_str + str(y) + "\n")
         arff_writer.close()
-        print("You can find the generated files in " + output_path + "!")
+        #print("You can find the generated files in " + output_path + "!")
